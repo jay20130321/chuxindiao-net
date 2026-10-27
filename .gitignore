@@ -1,0 +1,8 @@
+node_modules/
+data/
+.DS_Store
+*.log
+公网地址.txt
+.public_url
+.play_url
+.lan_url
