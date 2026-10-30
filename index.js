@@ -133,6 +133,34 @@ function clientPublic(c) {
   };
 }
 
+/** 踢掉同账号 / 同昵称的旧连接，避免重连或开多页出现两个自己 */
+function kickDuplicateIdentity(exceptId, { name = "", user = "" } = {}) {
+  const nm = String(name || "").trim();
+  const u = String(user || "").trim();
+  if ((!nm || nm === "钓客") && !u) return;
+  const doomed = [];
+  for (const [cid, c] of clients) {
+    if (cid === exceptId) continue;
+    const sameUser = u && String(c.user || "") === u;
+    const sameName = nm && nm !== "钓客" && String(c.name || "") === nm;
+    if (sameUser || sameName) doomed.push(cid);
+  }
+  for (const cid of doomed) {
+    const c = clients.get(cid);
+    if (!c) continue;
+    const spot = c.spot;
+    const wasRoom = !!c.roomId;
+    try {
+      leaveRoom(c);
+    } catch (_) {}
+    clients.delete(cid);
+    try {
+      c.ws.close();
+    } catch (_) {}
+    if (!wasRoom) emitSpotPresence(spot);
+  }
+}
+
 function roomMembers(room) {
   const list = [];
   for (const id of room.members) {
@@ -405,6 +433,7 @@ function handleAuthRegister(ws, client, data) {
   client.user = result.user;
   client.name = result.user;
   client.token = result.token;
+  kickDuplicateIdentity(client.id, { name: result.user, user: result.user });
   send(ws, { t: "auth_ok", user: result.user, token: result.token, save: null });
   send(ws, { t: "sys", text: `云账号 ${result.user} 注册成功（纯新档）` });
 }
@@ -418,6 +447,7 @@ function handleAuthLogin(ws, client, data) {
   client.user = result.user;
   client.name = result.user;
   client.token = result.token;
+  kickDuplicateIdentity(client.id, { name: result.user, user: result.user });
   send(ws, { t: "auth_ok", user: result.user, token: result.token, save: result.save });
   send(ws, { t: "sys", text: `云账号 ${result.user} 已登录` });
 }
@@ -432,6 +462,7 @@ function handleAuthResume(ws, client, data) {
   client.user = user;
   client.name = user;
   client.token = token;
+  kickDuplicateIdentity(client.id, { name: user, user });
   send(ws, { t: "auth_ok", user, token, save: readSave(user) });
   send(ws, { t: "sys", text: `云账号 ${user} 已恢复会话` });
 }
@@ -705,6 +736,8 @@ wss.on("connection", (ws) => {
     const t = data.t;
     if (t === "hello") {
       client.name = String(data.name || "钓客").slice(0, 12);
+      // 网页云存档不走联机 auth：用昵称（账号名）踢掉重连残影 / 多开页
+      kickDuplicateIdentity(id, { name: client.name, user: client.user || "" });
       return;
     }
     if (t === "auth_register") {
